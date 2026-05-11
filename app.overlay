@@ -1,0 +1,12 @@
+/*
+ * USB CDC-NCM virtual Ethernet interface.
+ *
+ * The remote MAC is the address advertised for the host side of the link.
+ */
+/ {
+	cdc_ncm_eth0: cdc_ncm_eth0 {
+		compatible = "zephyr,cdc-ncm-ethernet";
+		remote-mac-address = "020000000002";
+		local-mac-address = [02 00 00 00 00 01];
+	};
+};

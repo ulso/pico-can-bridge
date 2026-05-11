@@ -1,0 +1,21 @@
+#pico-zephyr-project
+#-------------------------------------------------------------------------------
+# Zephyr Example Application
+#
+# Copyright (c) 2021 Nordic Semiconductor ASA
+# SPDX-License-Identifier: Apache-2.0
+#-------------------------------------------------------------------------------
+# NOTE: Please do not remove the #pico-zephyr-project header, it is used by
+# the Raspberry Pi Pico VS Code extension to identify the project type.
+#-------------------------------------------------------------------------------
+
+cmake_minimum_required(VERSION 3.20.0)
+
+find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
+project(pico_can_bridge LANGUAGES C)
+
+target_sources(app PRIVATE
+    src/main.c
+    src/http_server.c
+    src/usb_descriptors.c
+)
