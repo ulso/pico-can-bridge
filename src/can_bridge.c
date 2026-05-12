@@ -117,9 +117,9 @@ int can_bridge_init(void)
 		return -ENODEV;
 	}
 
-	ret = can_set_mode(can_dev, CAN_MODE_LOOPBACK);
+	ret = can_set_mode(can_dev, CAN_MODE_NORMAL);
 	if (ret < 0) {
-		LOG_ERR("CAN loopback mode failed: %d", ret);
+		LOG_ERR("CAN normal mode failed: %d", ret);
 		return ret;
 	}
 
@@ -147,7 +147,7 @@ int can_bridge_init(void)
 			K_THREAD_STACK_SIZEOF(can_tx_stack),
 			can_tx_thread, NULL, NULL, NULL,
 			CAN_TX_PRIORITY, 0, K_NO_WAIT);
-	LOG_INF("CAN bus ready in loopback mode at %u bit/s",
+	LOG_INF("CAN bus ready in normal mode at %u bit/s",
 		CONFIG_CAN_DEFAULT_BITRATE);
 	return 0;
 }
