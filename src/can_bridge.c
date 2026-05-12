@@ -305,11 +305,33 @@ int can_bridge_handle_ws_text(const uint8_t *payload, size_t payload_len,
 		return ret;
 	}
 
-	return snprintk(response, response_len,
-			"{\"type\":\"can.tx\",\"ok\":true,\"bus\":%d,"
-			"\"id\":%d,\"ext\":%s,\"rtr\":%s,\"dlc\":%d,"
-			"\"queued\":true,\"ts\":%lld}",
-			msg.bus, msg.id, msg.ext ? "true" : "false",
-			msg.rtr ? "true" : "false", msg.dlc,
-			(long long)k_ticks_to_us_floor64(k_uptime_ticks()));
+	ret = snprintk(response, response_len,
+		       "{\"type\":\"can.tx\",\"ok\":true,\"bus\":%d,"
+		       "\"id\":%d,\"ext\":%s,\"rtr\":%s,\"dlc\":%d,"
+		       "\"data\":[",
+		       msg.bus, msg.id, msg.ext ? "true" : "false",
+		       msg.rtr ? "true" : "false", msg.dlc);
+	if (ret < 0 || ret >= response_len) {
+		return -ENOMEM;
+	}
+
+	size_t offset = ret;
+
+	for (size_t i = 0; i < msg.data_len; i++) {
+		ret = snprintk(&response[offset], response_len - offset,
+			       "%s%d", i == 0 ? "" : ",", msg.data[i]);
+		if (ret < 0 || ret >= response_len - offset) {
+			return -ENOMEM;
+		}
+		offset += ret;
+	}
+
+	ret = snprintk(&response[offset], response_len - offset,
+		       "],\"queued\":true,\"ts\":%lld}",
+		       (long long)k_ticks_to_us_floor64(k_uptime_ticks()));
+	if (ret < 0 || ret >= response_len - offset) {
+		return -ENOMEM;
+	}
+
+	return 0;
 }
