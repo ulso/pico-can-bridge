@@ -62,6 +62,8 @@ DNS-SD browse.
 The onboard LED blinks while CDC-NCM/link-local setup is pending and stays on
 once the firmware has a link-local IPv4 address.
 
+The root HTTP endpoint serves a small browser UI for the WebSocket endpoint.
+
 ## WebSocket
 
 The firmware exposes an initial WebSocket echo endpoint at:
