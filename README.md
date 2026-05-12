@@ -66,19 +66,21 @@ The root HTTP endpoint serves a small browser UI for the WebSocket endpoint.
 
 ## WebSocket
 
-The firmware exposes an initial WebSocket endpoint at:
+The firmware exposes the CAN WebSocket endpoint at:
 
 ```text
-ws://pico-can-bridge.local/ws
+ws://pico-can-bridge.local/can
 ```
 
-The endpoint accepts JSON-formatted CAN frames and replies with a JSON result.
+The legacy `/ws` endpoint is kept as an alias for older tests. The endpoint
+accepts JSON-formatted CAN frames and replies with a JSON result.
 For a quick browser-console test:
 
 ```js
-const ws = new WebSocket("ws://pico-can-bridge.local/ws");
+const ws = new WebSocket("ws://pico-can-bridge.local/can");
 ws.onmessage = (event) => console.log(event.data);
 ws.onopen = () => ws.send(JSON.stringify({
+  type: "can.tx",
   bus: 0,
   id: 1234,
   ext: false,

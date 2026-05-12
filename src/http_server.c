@@ -204,7 +204,7 @@ static const char index_html[] =
 	"function connect(){"
 	"if(ws&&ws.readyState<2)return;"
 	"setStatus('wait','connecting');"
-	"ws=new WebSocket('ws://'+location.host+'/ws');"
+	"ws=new WebSocket('ws://'+location.host+'/can');"
 	"ws.onopen=()=>{setStatus('ok','connected');setConnected(true);log('connected');requestStatus();statusTimer=setInterval(requestStatus,2000)};"
 	"ws.onmessage=e=>{try{const msg=JSON.parse(e.data);if(msg.type!=='can.status')log('< '+e.data);if(msg.type==='can.rx'){rxCount++;addFrame('RX',msg)}else if(msg.type==='can.tx'){txCount++;addFrame('TX',msg)}else if(msg.type==='can.status'){updateStatus(msg)}else if(msg.type==='error'){errCount++;addFrame('ERR',msg)}updateCounts()}catch(_){log('< '+e.data)}};"
 	"ws.onclose=e=>{if(statusTimer){clearInterval(statusTimer);statusTimer=null}setStatus('bad','disconnected');setConnected(false);log('closed '+e.code)};"
@@ -476,7 +476,8 @@ static size_t header_value_len(const char *value)
 
 static bool request_is_websocket(const char *request)
 {
-	return strncmp(request, "GET /ws ", 8) == 0 &&
+	return (strncmp(request, "GET /can ", 9) == 0 ||
+		strncmp(request, "GET /ws ", 8) == 0) &&
 	       find_header_value(request, "Sec-WebSocket-Key") != NULL;
 }
 
