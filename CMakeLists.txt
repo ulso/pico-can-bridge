@@ -15,6 +15,7 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(pico_can_bridge LANGUAGES C)
 
 target_sources(app PRIVATE
+    src/can_bridge.c
     src/main.c
     src/http_server.c
     src/usb_descriptors.c

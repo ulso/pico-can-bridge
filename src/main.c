@@ -7,6 +7,8 @@
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/usbd_msg.h>
 
+#include "can_bridge.h"
+
 LOG_MODULE_REGISTER(main, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define LED0_NODE DT_ALIAS(led0)
@@ -224,6 +226,11 @@ int main(void)
 
 	status_led_set_blink(500);
 	LOG_INF("USB CDC-NCM enabled");
+
+	ret = can_bridge_init();
+	if (ret != 0) {
+		LOG_WRN("CAN bridge init failed: %d", ret);
+	}
 
 	ret = http_server_start();
 	if (ret != 0) {

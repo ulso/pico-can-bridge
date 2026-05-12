@@ -11,12 +11,14 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
+#include "can_bridge.h"
+
 LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 
 #define HTTP_PORT 80
 #define HTTP_STACK_SIZE 4096
 #define MDNS_ANNOUNCE_STACK_SIZE 2048
-#define WS_STACK_SIZE 2048
+#define WS_STACK_SIZE 4096
 #define HTTP_PRIORITY 8
 #define MDNS_ANNOUNCE_PRIORITY 8
 #define WS_PRIORITY 8
@@ -24,6 +26,7 @@ LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 #define HTTP_REQUEST_MAX 1536
 #define HTTP_SEND_CHUNK 256
 #define WS_MAX_PAYLOAD 256
+#define WS_RESPONSE_MAX 256
 
 #define MDNS_PORT 5353
 #define MDNS_PTR_TTL 4500
@@ -476,6 +479,7 @@ static int ws_recv_exact(struct websocket_client *client, uint8_t *buf, size_t l
 static void websocket_echo_loop(struct websocket_client *client)
 {
 	uint8_t payload[WS_MAX_PAYLOAD];
+	char response[WS_RESPONSE_MAX];
 
 	if (client->pending_len > client->pending_pos) {
 		LOG_INF("WebSocket has %u buffered bytes after HTTP upgrade",
@@ -483,12 +487,37 @@ static void websocket_echo_loop(struct websocket_client *client)
 	}
 
 	while (1) {
+		struct zsock_pollfd pollfd = {
+			.fd = client->fd,
+			.events = ZSOCK_POLLIN,
+		};
 		uint8_t header[2];
 		uint8_t mask[4];
 		uint8_t opcode;
 		bool masked;
 		uint64_t payload_len;
 		int ret;
+
+		while (can_bridge_format_next_rx(response, sizeof(response)) == 0) {
+			ret = send_websocket_frame(client->fd, WS_OPCODE_TEXT,
+						   response, strlen(response));
+			if (ret < 0) {
+				LOG_WRN("WebSocket CAN RX send failed: %d", ret);
+				return;
+			}
+		}
+
+		if (client->pending_pos >= client->pending_len) {
+			ret = zsock_poll(&pollfd, 1, 100);
+			if (ret < 0) {
+				LOG_INF("WebSocket poll failed: %d", errno);
+				return;
+			}
+
+			if (ret == 0) {
+				continue;
+			}
+		}
 
 		ret = ws_recv_exact(client, header, sizeof(header));
 		if (ret < 0) {
@@ -560,8 +589,14 @@ static void websocket_echo_loop(struct websocket_client *client)
 			return;
 		}
 
+		ret = can_bridge_handle_ws_text(payload, payload_len,
+						response, sizeof(response));
+		if (ret < 0) {
+			LOG_WRN("CAN WebSocket request failed: %d", ret);
+		}
+
 		ret = send_websocket_frame(client->fd, WS_OPCODE_TEXT,
-					   payload, payload_len);
+					   response, strlen(response));
 		if (ret < 0) {
 			LOG_WRN("WebSocket send failed: %d", ret);
 			return;
