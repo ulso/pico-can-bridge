@@ -61,3 +61,19 @@ DNS-SD browse.
 
 The onboard LED blinks while CDC-NCM/link-local setup is pending and stays on
 once the firmware has a link-local IPv4 address.
+
+## WebSocket
+
+The firmware exposes an initial WebSocket echo endpoint at:
+
+```text
+ws://pico-can-bridge.local/ws
+```
+
+For a quick browser-console test:
+
+```js
+const ws = new WebSocket("ws://pico-can-bridge.local/ws");
+ws.onmessage = (event) => console.log(event.data);
+ws.onopen = () => ws.send("hello");
+```
