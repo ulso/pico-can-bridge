@@ -1,0 +1,74 @@
+diff --git a/subsys/usb/device_next/class/usbd_cdc_ncm.c b/subsys/usb/device_next/class/usbd_cdc_ncm.c
+index 31c575394a4..391770bdba7 100644
+--- a/subsys/usb/device_next/class/usbd_cdc_ncm.c
++++ b/subsys/usb/device_next/class/usbd_cdc_ncm.c
+@@ -798,6 +798,10 @@ static int ncm_send_notification_sequence(const struct device *dev)
+ 
+ 	if (data->if_state == IF_STATE_CONNECTION_STATUS_SENT) {
+ 		LOG_INF("Connected status done");
++		if (atomic_test_bit(&data->state, CDC_NCM_DATA_IFACE_ENABLED) &&
++		    atomic_test_bit(&data->state, CDC_NCM_IFACE_UP)) {
++			net_if_carrier_on(data->iface);
++		}
+ 		data->if_state = IF_STATE_DONE;
+ 	}
+ 
+@@ -840,6 +844,9 @@ static void usbd_cdc_ncm_update(struct usbd_class_data *const c_data,
+ 
+ 	if (data_iface == iface && alternate == 0) {
+ 		atomic_clear_bit(&data->state, CDC_NCM_DATA_IFACE_ENABLED);
++		(void)k_work_cancel_delayable(&data->notif_work);
++		data->if_state = IF_STATE_INIT;
++		net_if_carrier_off(data->iface);
+ 		data->tx_seq = 0;
+ 		data->rx_seq = 0;
+ 	}
+@@ -847,6 +854,7 @@ static void usbd_cdc_ncm_update(struct usbd_class_data *const c_data,
+ 	if (data_iface == iface && alternate == 1) {
+ 		atomic_set_bit(&data->state, CDC_NCM_DATA_IFACE_ENABLED);
+ 		data->if_state = IF_STATE_INIT;
++		net_if_carrier_off(data->iface);
+ 		(void)k_work_reschedule(&data->notif_work, K_MSEC(100));
+ 		ret = cdc_ncm_out_start(c_data);
+ 		if (ret < 0) {
+@@ -867,6 +875,9 @@ static void usbd_cdc_ncm_disable(struct usbd_class_data *const c_data)
+ 
+ 	atomic_clear_bit(&data->state, CDC_NCM_DATA_IFACE_ENABLED);
+ 	atomic_clear_bit(&data->state, CDC_NCM_CLASS_SUSPENDED);
++	(void)k_work_cancel_delayable(&data->notif_work);
++	data->if_state = IF_STATE_INIT;
++	net_if_carrier_off(data->iface);
+ 
+ 	LOG_INF("Disabled %s", c_data->name);
+ }
+@@ -877,6 +888,8 @@ static void usbd_cdc_ncm_suspended(struct usbd_class_data *const c_data)
+ 	struct cdc_ncm_eth_data *data = dev->data;
+ 
+ 	atomic_set_bit(&data->state, CDC_NCM_CLASS_SUSPENDED);
++	(void)k_work_cancel_delayable(&data->notif_work);
++	data->if_state = IF_STATE_INIT;
+ }
+ 
+ static void usbd_cdc_ncm_resumed(struct usbd_class_data *const c_data)
+@@ -1136,10 +1149,12 @@ static int cdc_ncm_iface_start(const struct device *dev, struct net_if *iface)
+ 	LOG_DBG("Start interface %d", net_if_get_by_iface(iface));
+ 
+ 	atomic_set_bit(&data->state, CDC_NCM_IFACE_UP);
+-	net_if_carrier_on(iface);
+ 
+ 	if (atomic_test_bit(&data->state, CDC_NCM_DATA_IFACE_ENABLED)) {
++		net_if_carrier_on(iface);
+ 		(void)k_work_reschedule(&data->notif_work, K_MSEC(1));
++	} else {
++		net_if_carrier_off(iface);
+ 	}
+ 
+ 	return 0;
+@@ -1152,6 +1167,7 @@ static int cdc_ncm_iface_stop(const struct device *dev, struct net_if *iface)
+ 	LOG_DBG("Stop interface %d", net_if_get_by_iface(iface));
+ 
+ 	atomic_clear_bit(&data->state, CDC_NCM_IFACE_UP);
++	net_if_carrier_off(iface);
+ 
+ 	if (atomic_test_bit(&data->state, CDC_NCM_DATA_IFACE_ENABLED)) {
+ 		(void)k_work_reschedule(&data->notif_work, K_MSEC(1));

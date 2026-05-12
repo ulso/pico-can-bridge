@@ -29,6 +29,16 @@ The firmware uses IPv4 link-local autoconfiguration on the CDC-NCM interface.
 The host should also use link-local addressing on the new USB network
 interface.
 
+This project currently carries a local Zephyr CDC-NCM patch for macOS
+alternate-setting handling:
+
+```text
+patches/zephyr-cdc-ncm-macos-altsetting.patch
+```
+
+Apply it in the Zephyr workspace before building if the workspace has been
+updated or reset.
+
 The board advertises:
 
 ```text
@@ -48,3 +58,6 @@ dns-sd -L pico-can-bridge _http._tcp local
 
 Give macOS a few seconds after reconnecting the board before starting the
 DNS-SD browse.
+
+The onboard LED blinks while CDC-NCM/link-local setup is pending and stays on
+once the firmware has a link-local IPv4 address.
