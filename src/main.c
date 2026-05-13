@@ -110,10 +110,16 @@ static void usbd_msg_cb(struct usbd_context *const ctx,
 	case USBD_MSG_RESET:
 	case USBD_MSG_SUSPEND:
 	case USBD_MSG_VBUS_REMOVED:
-		LOG_DBG("USBD message: %s", usbd_msg_type_string(msg->type));
+		LOG_INF("USBD message: %s", usbd_msg_type_string(msg->type));
 		atomic_set(&network_is_ready, 0);
 		status_led_set_blink(500);
 		set_usb_ncm_network_state(false);
+		break;
+	case USBD_MSG_RESUME:
+	case USBD_MSG_VBUS_READY:
+		LOG_INF("USBD message: %s", usbd_msg_type_string(msg->type));
+		status_led_set_blink(500);
+		set_usb_ncm_network_state(true);
 		break;
 	default:
 		LOG_DBG("USBD message: %s", usbd_msg_type_string(msg->type));
