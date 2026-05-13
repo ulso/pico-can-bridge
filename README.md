@@ -136,3 +136,9 @@ Licensed under either of:
 - [MIT license](LICENSE-MIT)
 
 at your option.
+
+## Development
+
+This project was developed in close collaboration with OpenAI Codex, used for
+firmware implementation, debugging support, documentation, and iteration on the
+built-in web UI.
