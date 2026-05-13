@@ -15,6 +15,22 @@ Current features:
 - MCP2515 CAN controller in normal, loopback, or listen-only mode
 - Startup recovery for a macOS/RP2040 CDC-NCM alternate-setting race
 
+## Screenshots
+
+### Desktop web UI
+
+![Pico CAN Bridge desktop web UI](docs/images/web-ui-desktop.png)
+
+### iPad
+
+![Pico CAN Bridge running on iPad](docs/images/web-ui-ipad.png)
+
+### iPhone
+
+![Pico CAN Bridge running on iPhone, status and transmit view](docs/images/web-ui-iphone1.png)
+
+![Pico CAN Bridge running on iPhone, filters and log view](docs/images/web-ui-iphone2.png)
+
 ## Build
 
 Run the build from the Zephyr workspace so `west build` finds Zephyr's command extensions.
