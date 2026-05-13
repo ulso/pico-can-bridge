@@ -127,3 +127,12 @@ Python client examples are available in [examples/](examples/).
 - [docs/sdd.md](docs/sdd.md): software design description
 - [docs/protocol.md](docs/protocol.md): WebSocket JSON protocol
 - [docs/known-issues.md](docs/known-issues.md): known USB/macOS notes and local Zephyr patch
+
+## License
+
+Licensed under either of:
+
+- [Apache License, Version 2.0](LICENSE-APACHE)
+- [MIT license](LICENSE-MIT)
+
+at your option.

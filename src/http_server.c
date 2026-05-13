@@ -88,7 +88,7 @@ static const char index_html[] =
 	".stack{display:grid;gap:16px}"
 	"section{margin-top:16px}.panel{border:1px solid #c7d0da;background:#fff;border-radius:8px;padding:14px}"
 	"h2{font-size:15px;margin:0 0 12px;font-weight:700}"
-	".metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}"
+	".metrics{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px}"
 	".metric{border:1px solid #d7dee6;border-radius:6px;padding:8px;background:#f9fafb}"
 	".metric span{display:block;font-size:11px;color:#5d6975}.metric strong{font-size:18px}"
 	".stateOk{color:#1f9d55}.stateWarn{color:#b7791f}.stateBad{color:#d64545}.stateOff{color:#65717d}"
@@ -97,6 +97,8 @@ static const char index_html[] =
 	"input,select{box-sizing:border-box;width:100%;border:1px solid #bdc7d1;border-radius:6px;background:#fff;color:#17202a;padding:8px;font:14px ui-monospace,SFMono-Regular,Menlo,monospace}"
 	".checks{display:flex;align-items:center;gap:16px;margin-top:2px}.checks label{display:flex;gap:6px;align-items:center;margin:0;font-weight:650}"
 	"input[type=checkbox]{width:auto}.hint{font-size:12px;color:#65717d;margin-top:6px}"
+	".filters{display:flex;flex-wrap:wrap;align-items:end;gap:10px;margin-bottom:8px}"
+	".filters label{margin:0}.filters .idFilter{min-width:150px;max-width:220px}.filters .check{display:flex;gap:6px;align-items:center;font-weight:650}"
 	".tableWrap{border:1px solid #c7d0da;border-radius:8px;overflow:auto;background:#fff;max-height:430px}"
 	"table{width:100%;border-collapse:collapse;font:12px ui-monospace,SFMono-Regular,Menlo,monospace}"
 	"th,td{padding:7px 8px;border-bottom:1px solid #edf0f3;text-align:left;white-space:nowrap}"
@@ -125,6 +127,10 @@ static const char index_html[] =
 	"<div class=\"metric\"><span>RX frames</span><strong id=\"rxCount\">0</strong></div>"
 	"<div class=\"metric\"><span>TX requests</span><strong id=\"txCount\">0</strong></div>"
 	"<div class=\"metric\"><span>CAN state</span><strong id=\"canState\">-</strong></div>"
+	"<div class=\"metric\"><span>TX errors</span><strong id=\"txErrCount\">0</strong></div>"
+	"<div class=\"metric\"><span>RX errors</span><strong id=\"rxErrCount\">0</strong></div>"
+	"<div class=\"metric\"><span>TX queue</span><strong id=\"txQueue\">-</strong></div>"
+	"<div class=\"metric\"><span>RX queue</span><strong id=\"rxQueue\">-</strong></div>"
 	"<div class=\"metric\"><span>Last ID</span><strong id=\"lastId\">-</strong></div>"
 	"</section>"
 	"<section class=\"grid\">"
@@ -150,6 +156,12 @@ static const char index_html[] =
 	"</div>"
 	"</div>"
 	"<div>"
+	"<div class=\"filters\">"
+	"<label class=\"check\"><input id=\"showRx\" type=\"checkbox\" checked> RX</label>"
+	"<label class=\"check\"><input id=\"showTx\" type=\"checkbox\" checked> TX</label>"
+	"<div class=\"idFilter\"><label for=\"filterId\">Filter ID</label><input id=\"filterId\" placeholder=\"123 or 0x123\" inputmode=\"text\"></div>"
+	"<button id=\"clearFrames\">Clear Frames</button>"
+	"</div>"
 	"<div class=\"tableWrap\">"
 	"<table><thead><tr><th>Time</th><th>Dir</th><th>ID</th><th>Fmt</th><th>DLC</th><th>Data</th></tr></thead><tbody id=\"frames\"></tbody></table>"
 	"</div>"
@@ -172,6 +184,10 @@ static const char index_html[] =
 	"const rxCountEl=document.getElementById('rxCount');"
 	"const txCountEl=document.getElementById('txCount');"
 	"const canStateEl=document.getElementById('canState');"
+	"const txErrCountEl=document.getElementById('txErrCount');"
+	"const rxErrCountEl=document.getElementById('rxErrCount');"
+	"const txQueueEl=document.getElementById('txQueue');"
+	"const rxQueueEl=document.getElementById('rxQueue');"
 	"const lastIdEl=document.getElementById('lastId');"
 	"const bitrateLabel=document.getElementById('bitrateLabel');"
 	"const modeLabel=document.getElementById('modeLabel');"
@@ -183,9 +199,14 @@ static const char index_html[] =
 	"const rtrEl=document.getElementById('rtr');"
 	"const bitrateEl=document.getElementById('bitrate');"
 	"const modeEl=document.getElementById('mode');"
+	"const showRxEl=document.getElementById('showRx');"
+	"const showTxEl=document.getElementById('showTx');"
+	"const filterIdEl=document.getElementById('filterId');"
+	"const clearFramesBtn=document.getElementById('clearFrames');"
 	"let ws=null;"
 	"let statusTimer=null;"
 	"let rxCount=0,txCount=0,errCount=0;"
+	"let frames=[];"
 	"let configDirty=false;"
 	"function now(){return new Date().toLocaleTimeString()}"
 	"function log(line){logEl.textContent+=now()+'  '+line+'\\n';logEl.scrollTop=logEl.scrollHeight}"
@@ -196,11 +217,16 @@ static const char index_html[] =
 	"function fmtId(id,ext){return '0x'+Number(id).toString(16).toUpperCase().padStart(ext?8:3,'0')}"
 	"function fmtData(data){return (data||[]).map(v=>Number(v).toString(16).toUpperCase().padStart(2,'0')).join(' ')}"
 	"function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}"
+	"function val(v){return v==null?'-':v}"
 	"function updateCounts(){rxCountEl.textContent=rxCount;txCountEl.textContent=txCount}"
 	"function stateView(state){if(state==='error-active')return['OK (error-active)','stateOk'];if(state==='error-warning')return['Warning (error-warning)','stateWarn'];if(state==='error-passive')return['Passive (error-passive)','stateWarn'];if(state==='bus-off')return['Bus off','stateBad'];if(state==='stopped')return['Stopped','stateOff'];return[state||'-','']}"
-	"function updateStatus(msg){const st=stateView(msg.state);canStateEl.textContent=st[0];canStateEl.className=st[1];if(!configDirty){if(msg.bitrate)bitrateEl.value=msg.bitrate;if(msg.mode)modeEl.value=msg.mode}bitrateLabel.textContent=msg.bitrate?'CAN '+Math.round(msg.bitrate/1000)+' kbit/s':'CAN -';modeLabel.textContent='mode '+(msg.mode||'-');errorLabel.textContent='TX err '+(msg.txErr||0)+' / RX err '+(msg.rxErr||0)}"
+	"function updateStatus(msg){const st=stateView(msg.state);canStateEl.textContent=st[0];canStateEl.className=st[1];txErrCountEl.textContent=msg.txErr||0;rxErrCountEl.textContent=msg.rxErr||0;txQueueEl.textContent=val(msg.txQueueUsed)+'/'+val(msg.txQueueFree);rxQueueEl.textContent=val(msg.rxQueueUsed)+'/'+val(msg.rxQueueFree);if(!configDirty){if(msg.bitrate)bitrateEl.value=msg.bitrate;if(msg.mode)modeEl.value=msg.mode}bitrateLabel.textContent=msg.bitrate?'CAN '+Math.round(msg.bitrate/1000)+' kbit/s':'CAN -';modeLabel.textContent='mode '+(msg.mode||'-');errorLabel.textContent='TX err '+(msg.txErr||0)+' / RX err '+(msg.rxErr||0)+' | TXQ '+val(msg.txQueueUsed)+'/'+val(msg.txQueueFree)+' | RXQ '+val(msg.rxQueueUsed)+'/'+val(msg.rxQueueFree)}"
 	"function requestStatus(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'can.status'}))}"
-	"function addFrame(dir,msg){const tr=document.createElement('tr');const cls=dir==='RX'?'dirRx':dir==='TX'?'dirTx':'dirErr';const dlc=msg.dlc==null?'':msg.dlc;tr.innerHTML='<td>'+now()+'</td><td class=\"'+cls+'\">'+dir+'</td><td>'+esc(fmtId(msg.id||0,msg.ext))+'</td><td>'+(msg.ext?'EXT':'STD')+(msg.rtr?' RTR':'')+'</td><td>'+esc(dlc)+'</td><td>'+esc(fmtData(msg.data))+'</td>';framesEl.prepend(tr);while(framesEl.children.length>80)framesEl.lastChild.remove();lastIdEl.textContent=fmtId(msg.id||0,msg.ext)}"
+	"function filterIdValue(){const s=filterIdEl.value.trim();return s?parseId(s):null}"
+	"function frameVisible(item){if(item.dir==='RX'&&!showRxEl.checked)return false;if(item.dir==='TX'&&!showTxEl.checked)return false;const wanted=filterIdValue();return wanted==null||Number(item.msg.id)===wanted}"
+	"function rowHtml(item){const msg=item.msg;const cls=item.dir==='RX'?'dirRx':item.dir==='TX'?'dirTx':'dirErr';const dlc=msg.dlc==null?'':msg.dlc;return '<td>'+item.time+'</td><td class=\"'+cls+'\">'+item.dir+'</td><td>'+esc(fmtId(msg.id||0,msg.ext))+'</td><td>'+(msg.ext?'EXT':'STD')+(msg.rtr?' RTR':'')+'</td><td>'+esc(dlc)+'</td><td>'+esc(fmtData(msg.data))+'</td>'}"
+	"function renderFrames(){framesEl.textContent='';for(const item of frames){if(!frameVisible(item))continue;const tr=document.createElement('tr');tr.innerHTML=rowHtml(item);framesEl.appendChild(tr)}}"
+	"function addFrame(dir,msg){frames.unshift({dir,msg,time:now()});while(frames.length>160)frames.pop();lastIdEl.textContent=fmtId(msg.id||0,msg.ext);renderFrames()}"
 	"function makeFrame(){const data=parseData(dataEl.value);const dlc=Number.parseInt(dlcEl.value,10);if(data.some(v=>!Number.isInteger(v)||v<0||v>255))throw new Error('Invalid data byte');if(!Number.isInteger(dlc)||dlc<0||dlc>8)throw new Error('Invalid DLC');if(!rtrEl.checked&&data.length!==dlc)throw new Error('Data length must match DLC');const id=parseId(idEl.value);if(!Number.isInteger(id)||id<0)throw new Error('Invalid ID');return{type:'can.tx',bus:0,id,ext:extEl.checked,rtr:rtrEl.checked,dlc,data:rtrEl.checked?[]:data}}"
 	"async function copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(text);return}const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();document.execCommand('copy');ta.remove()}"
 	"function connect(){"
@@ -220,7 +246,11 @@ static const char index_html[] =
 	"modeEl.onchange=()=>{configDirty=true};"
 	"applyConfigBtn.onclick=()=>{const bitrate=Number.parseInt(bitrateEl.value,10);if(!Number.isInteger(bitrate)||bitrate<=0){log('! Invalid bitrate');return}const msg={type:'can.config.set',bitrate,mode:modeEl.value};const text=JSON.stringify(msg);if(ws&&ws.readyState===1){configDirty=false;ws.send(text);log('> '+text)}};"
 	"refreshStatusBtn.onclick=()=>{configDirty=false;requestStatus()};"
-	"clearBtn.onclick=()=>{logEl.textContent='';framesEl.textContent='';rxCount=0;txCount=0;errCount=0;lastIdEl.textContent='-';updateCounts()};"
+	"showRxEl.onchange=renderFrames;"
+	"showTxEl.onchange=renderFrames;"
+	"filterIdEl.oninput=renderFrames;"
+	"clearFramesBtn.onclick=()=>{frames=[];framesEl.textContent='';lastIdEl.textContent='-'};"
+	"clearBtn.onclick=()=>{logEl.textContent='';frames=[];framesEl.textContent='';rxCount=0;txCount=0;errCount=0;lastIdEl.textContent='-';updateCounts()};"
 	"log('ready');"
 	"</script>"
 	"</body>"
@@ -1005,6 +1035,19 @@ static void handle_client(int client_fd)
 			(void)zsock_close(client_fd);
 		}
 
+		return;
+	}
+
+	if (strncmp(request, "GET /favicon.ico ", 17) == 0 ||
+	    strncmp(request, "GET /apple-touch-icon.png ", 26) == 0 ||
+	    strncmp(request, "GET /apple-touch-icon-precomposed.png ", 38) == 0) {
+		static const char no_content[] =
+			"HTTP/1.0 204 No Content\r\n"
+			"Connection: close\r\n"
+			"\r\n";
+
+		(void)send_all(client_fd, no_content, strlen(no_content));
+		(void)zsock_close(client_fd);
 		return;
 	}
 
