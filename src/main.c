@@ -6,6 +6,7 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/usb/usbd.h>
 #include <zephyr/usb/usbd_msg.h>
+#include <zephyr/sys/reboot.h>
 
 #include "can_bridge.h"
 
@@ -25,12 +26,15 @@ static atomic_t heartbeat_period_ms = ATOMIC_INIT(1000);
 static atomic_t network_should_run;
 static atomic_t network_is_up;
 static atomic_t network_is_ready;
+static atomic_t http_server_is_started;
 
 struct usbd_context *usb_device_init(void);
 int http_server_start(void);
 
 static struct net_mgmt_event_callback ipv4_addr_cb;
 static struct k_work_delayable usb_ncm_network_work;
+static struct k_work_delayable usb_ncm_startup_watchdog_work;
+static struct k_work http_server_start_work;
 
 static void status_led_set_blink(int period_ms)
 {
@@ -65,7 +69,9 @@ static void usb_ncm_network_work_handler(struct k_work *work)
 	if (should_run && !atomic_get(&network_is_up)) {
 		net_if_up(iface);
 		atomic_set(&network_is_up, 1);
-		LOG_INF("CDC-NCM waiting for IPv4 link-local autoconfiguration");
+		if (!atomic_get(&network_is_ready)) {
+			LOG_INF("CDC-NCM waiting for IPv4 link-local autoconfiguration");
+		}
 		return;
 	}
 
@@ -86,7 +92,40 @@ static void set_usb_ncm_network_state(bool up)
 		k_work_schedule(&usb_ncm_network_work, K_SECONDS(1));
 	} else {
 		(void)k_work_cancel_delayable(&usb_ncm_network_work);
+		(void)k_work_cancel_delayable(&usb_ncm_startup_watchdog_work);
 		k_work_schedule(&usb_ncm_network_work, K_NO_WAIT);
+	}
+}
+
+static void usb_ncm_startup_watchdog_work_handler(struct k_work *work)
+{
+	ARG_UNUSED(work);
+
+	if (!atomic_get(&network_should_run) || atomic_get(&network_is_ready)) {
+		return;
+	}
+
+	LOG_ERR("CDC-NCM did not reach link-local state; rebooting for USB recovery");
+	status_led_set_error();
+	k_sleep(K_MSEC(250));
+	sys_reboot(SYS_REBOOT_COLD);
+}
+
+static void http_server_start_work_handler(struct k_work *work)
+{
+	int ret;
+
+	ARG_UNUSED(work);
+
+	if (atomic_cas(&http_server_is_started, 0, 1) == false) {
+		return;
+	}
+
+	ret = http_server_start();
+	if (ret != 0) {
+		LOG_ERR("HTTP server failed: %d", ret);
+		atomic_set(&http_server_is_started, 0);
+		status_led_set_error();
 	}
 }
 
@@ -99,6 +138,7 @@ static void usbd_msg_cb(struct usbd_context *const ctx,
 	case USBD_MSG_CONFIGURATION:
 		LOG_INF("USBD message: %s", usbd_msg_type_string(msg->type));
 		set_usb_ncm_network_state(true);
+		k_work_reschedule(&usb_ncm_startup_watchdog_work, K_SECONDS(6));
 		break;
 	case USBD_MSG_STACK_ERROR:
 	case USBD_MSG_UDC_ERROR:
@@ -120,6 +160,7 @@ static void usbd_msg_cb(struct usbd_context *const ctx,
 		LOG_INF("USBD message: %s", usbd_msg_type_string(msg->type));
 		status_led_set_blink(500);
 		set_usb_ncm_network_state(true);
+		k_work_reschedule(&usb_ncm_startup_watchdog_work, K_SECONDS(6));
 		break;
 	default:
 		LOG_DBG("USBD message: %s", usbd_msg_type_string(msg->type));
@@ -186,13 +227,18 @@ static void ipv4_addr_handler(struct net_mgmt_event_callback *cb,
 		LOG_INF("HTTP service: _http._tcp.local on port 80");
 
 		atomic_set(&network_is_ready, 1);
+		(void)k_work_cancel_delayable(&usb_ncm_startup_watchdog_work);
 		status_led_set_solid();
+		k_work_submit(&http_server_start_work);
 	}
 }
 
 static void register_usb_ncm_network_callbacks(void)
 {
 	k_work_init_delayable(&usb_ncm_network_work, usb_ncm_network_work_handler);
+	k_work_init_delayable(&usb_ncm_startup_watchdog_work,
+			      usb_ncm_startup_watchdog_work_handler);
+	k_work_init(&http_server_start_work, http_server_start_work_handler);
 
 	net_mgmt_init_event_callback(&ipv4_addr_cb, ipv4_addr_handler,
 				     NET_EVENT_IPV4_ADDR_ADD);
@@ -236,13 +282,6 @@ int main(void)
 	ret = can_bridge_init();
 	if (ret != 0) {
 		LOG_WRN("CAN bridge init failed: %d", ret);
-	}
-
-	ret = http_server_start();
-	if (ret != 0) {
-		LOG_ERR("HTTP server failed: %d", ret);
-		status_led_set_error();
-		return 0;
 	}
 
 	while (1) {
