@@ -15,6 +15,13 @@ Current features:
 - MCP2515 CAN controller in normal, loopback, or listen-only mode
 - Startup recovery for a macOS/RP2040 CDC-NCM alternate-setting race
 
+## Current status
+
+This project is in early development. It is functional on the tested Apple
+USB-C hosts, with known RP2040/Zephyr CDC-NCM startup quirks documented in
+[docs/known-issues.md](docs/known-issues.md). Additional host platforms will
+be listed as they are tested.
+
 ## Screenshots
 
 ### Desktop web UI
