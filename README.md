@@ -1,26 +1,37 @@
 # Pico CAN Bridge
 
-Firmware for the Adafruit Feather RP2040 CAN Bus board.
+Firmware for the [Adafruit Feather RP2040 CAN Bus board](https://www.adafruit.com/product/5724).
+The board appears as a USB CDC-NCM network interface and exposes a small web UI
+plus a JSON WebSocket API for CAN traffic.
 
-Current milestone: USB CDC-NCM using Zephyr's USB device stack next, IPv4
-link-local addressing, mDNS, DNS-SD, and a small HTTP service.
+Current features:
+
+- USB CDC-NCM using Zephyr's USB device stack next
+- IPv4 link-local addressing
+- mDNS hostname and DNS-SD HTTP service announcement
+- HTTP web UI served from the firmware
+- WebSocket CAN bridge at `/can`
+- JSON CAN TX/RX/status/config protocol
+- MCP2515 CAN controller in normal, loopback, or listen-only mode
+- Startup recovery for a macOS/RP2040 CDC-NCM alternate-setting race
 
 ## Build
 
-Run the build from the Zephyr workspace so `west build` finds Zephyr's command extensions:
+Run the build from the Zephyr workspace so `west build` finds Zephyr's command extensions.
+Replace `<zephyr-workspace>` and `<repo>` with your local paths:
 
 ```sh
-cd /Users/ulf/.pico-sdk/zephyr_workspace
+cd <zephyr-workspace>
 ./venv/bin/west build --pristine \
   -b adafruit_feather_canbus_rp2040 \
-  -d /Users/ulf/Documents/Projects/pico_and_zephyr/pico_can_bridge/build \
-  /Users/ulf/Documents/Projects/pico_and_zephyr/pico_can_bridge
+  -d <repo>/build \
+  <repo>
 ```
 
 The UF2 ends up at:
 
 ```text
-/Users/ulf/Documents/Projects/pico_and_zephyr/pico_can_bridge/build/zephyr/zephyr.uf2
+<repo>/build/zephyr/zephyr.uf2
 ```
 
 ## USB CDC-NCM
@@ -38,6 +49,11 @@ patches/zephyr-cdc-ncm-macos-altsetting.patch
 
 Apply it in the Zephyr workspace before building if the workspace has been
 updated or reset.
+
+```sh
+cd <zephyr-workspace>/zephyr-main
+git apply <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
+```
 
 The board advertises:
 
@@ -64,6 +80,18 @@ once the firmware has a link-local IPv4 address.
 
 The root HTTP endpoint serves a small browser UI for the WebSocket endpoint.
 
+## Web UI
+
+Open:
+
+```text
+http://pico-can-bridge.local/
+```
+
+The UI can connect to the CAN WebSocket, transmit frames, display received
+frames, show CAN status, change bitrate/mode, and copy the current transmit
+frame as JSON for scripts.
+
 ## WebSocket
 
 The firmware exposes the CAN WebSocket endpoint at:
@@ -89,3 +117,11 @@ ws.onopen = () => ws.send(JSON.stringify({
   data: [1, 2]
 }));
 ```
+
+See [docs/protocol.md](docs/protocol.md) for the JSON protocol.
+
+## Documentation
+
+- [docs/sdd.md](docs/sdd.md): software design description
+- [docs/protocol.md](docs/protocol.md): WebSocket JSON protocol
+- [docs/known-issues.md](docs/known-issues.md): known USB/macOS notes and local Zephyr patch
