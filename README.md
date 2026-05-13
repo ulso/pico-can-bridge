@@ -120,6 +120,8 @@ ws.onopen = () => ws.send(JSON.stringify({
 
 See [docs/protocol.md](docs/protocol.md) for the JSON protocol.
 
+Python client examples are available in [examples/](examples/).
+
 ## Documentation
 
 - [docs/sdd.md](docs/sdd.md): software design description

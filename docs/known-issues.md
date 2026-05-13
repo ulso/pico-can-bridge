@@ -20,6 +20,11 @@ reboot and tries enumeration again.
 This is a workaround for the observed host/device timing behavior, not a claim
 that the root cause is fully fixed.
 
+The issue has been observed frequently on a MacBook Pro with Apple silicon
+(M1 Max). In one quick test with an Intel Mac, the device stayed in alternate
+setting 1 and reached link-local without needing the startup watchdog. Treat
+this as a lab observation rather than a firm platform guarantee.
+
 ## Local Zephyr CDC-NCM Patch
 
 The project relies on a local Zephyr patch:
