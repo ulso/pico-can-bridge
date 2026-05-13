@@ -22,6 +22,9 @@ USB-C hosts, with known RP2040/Zephyr CDC-NCM startup quirks documented in
 [docs/known-issues.md](docs/known-issues.md). Additional host platforms will
 be listed as they are tested.
 
+Prebuilt UF2 test builds are available from the
+[GitHub Releases page](https://github.com/ulso/pico-can-bridge/releases).
+
 ## Screenshots
 
 ### Desktop web UI
