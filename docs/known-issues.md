@@ -58,6 +58,16 @@ The firmware handles resume/VBUS-ready messages by restarting CDC-NCM network
 state. This fixed the observed case where the host woke from sleep and the board
 remained powered but unreachable.
 
+## USB Identity
+
+The original Adafruit CircuitPython firmware for the Feather RP2040 CAN Bus
+uses Adafruit's USB VID/PID (`0x239A:0x8130`) and identifies as
+`Feather RP2040 CAN`. Pico CAN Bridge currently uses Zephyr's sample VID/PID
+(`0x2FE3:0x0100`) with project-specific USB strings.
+
+This avoids presenting the firmware as an official Adafruit USB device and
+avoids reusing the Adafruit CircuitPython PID for a different USB composition.
+
 ## DNS-SD Timing
 
 mDNS/DNS-SD announcements may take a few seconds to become visible on macOS.

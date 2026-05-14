@@ -66,6 +66,10 @@ The firmware uses IPv4 link-local autoconfiguration on the CDC-NCM interface.
 The host should also use link-local addressing on the new USB network
 interface.
 
+The firmware uses Zephyr's sample USB VID/PID (`0x2FE3:0x0100`) and its own
+USB product/manufacturer strings. This intentionally differs from the original
+Adafruit CircuitPython USB identity for the board (`0x239A:0x8130`).
+
 This project currently carries a local Zephyr CDC-NCM patch for macOS
 alternate-setting handling:
 
