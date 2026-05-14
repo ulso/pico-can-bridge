@@ -25,6 +25,16 @@ be listed as they are tested.
 Prebuilt UF2 test builds are available from the
 [GitHub Releases page](https://github.com/ulso/pico-can-bridge/releases).
 
+## Hardware
+
+The firmware targets the
+[Adafruit Feather RP2040 CAN Bus board](https://www.adafruit.com/product/5724).
+The photo below shows a test setup with the Pico CAN Bridge board connected to
+another CAN node, a battery, USB-C, and a serial debug adapter on the board's
+TX/RX pins.
+
+![Pico CAN Bridge test setup](docs/images/test-setup.png)
+
 ## Screenshots
 
 ### Desktop web UI
