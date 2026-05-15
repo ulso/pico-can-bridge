@@ -50,6 +50,21 @@ cdc_ncm: USB device is suspended (FIXME)
 when the board is powered from battery and the USB cable is unplugged.
 
 If the Zephyr workspace is reset or updated, reapply the patch before building.
+This includes every `west update`, because the update can replace the patched
+Zephyr CDC-NCM source file:
+
+```sh
+cd <zephyr-workspace>/zephyr-main
+git apply --check <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
+git apply <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
+```
+
+If `git apply --check` says the patch is already applied, verify the local
+Zephyr tree still carries the modification:
+
+```sh
+git diff -- subsys/usb/device_next/class/usbd_cdc_ncm.c
+```
 
 ## Sleep/Wake
 

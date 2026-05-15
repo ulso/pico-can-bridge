@@ -88,12 +88,18 @@ patches/zephyr-cdc-ncm-macos-altsetting.patch
 ```
 
 Apply it in the Zephyr workspace before building if the workspace has been
-updated or reset.
+updated or reset. In particular, run this check after every `west update`,
+because updating Zephyr can replace the locally patched CDC-NCM source file.
 
 ```sh
 cd <zephyr-workspace>/zephyr-main
+git apply --check <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
 git apply <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
 ```
+
+If `git apply --check` reports that the patch is already applied, confirm that
+`subsys/usb/device_next/class/usbd_cdc_ncm.c` is locally modified before
+building.
 
 The board advertises:
 

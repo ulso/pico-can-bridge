@@ -26,11 +26,20 @@ patches/zephyr-cdc-ncm-macos-altsetting.patch
 ```
 
 If the Zephyr workspace has been updated or reset, apply the patch before
-building:
+building. Do this after every `west update`, since updating Zephyr can replace
+the locally patched CDC-NCM source file:
 
 ```sh
 cd <zephyr-workspace>/zephyr-main
+git apply --check <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
 git apply <repo>/patches/zephyr-cdc-ncm-macos-altsetting.patch
+```
+
+If the patch is already applied, `git apply --check` may fail. In that case,
+confirm the expected local Zephyr diff is present before continuing:
+
+```sh
+git diff -- subsys/usb/device_next/class/usbd_cdc_ncm.c
 ```
 
 ## 3. Build a clean UF2
