@@ -60,6 +60,7 @@ static K_THREAD_STACK_DEFINE(can_tx_stack, CAN_TX_STACK_SIZE);
 static struct k_thread can_tx_thread_data;
 static K_MUTEX_DEFINE(can_lock);
 static int can_rx_filter_id = -1;
+static atomic_t can_rx_streaming;
 
 static const struct json_obj_descr can_json_descr[] = {
 	JSON_OBJ_DESCR_PRIM(struct can_json_message, type, JSON_TOK_STRING),
@@ -170,9 +171,25 @@ static void can_rx_callback(const struct device *dev, struct can_frame *frame,
 	ARG_UNUSED(dev);
 	ARG_UNUSED(user_data);
 
+	if (!atomic_get(&can_rx_streaming)) {
+		return;
+	}
+
 	if (k_msgq_put(&can_rx_queue, frame, K_NO_WAIT) != 0) {
 		LOG_WRN("CAN RX software queue full");
 	}
+}
+
+void can_bridge_set_rx_streaming(bool enabled)
+{
+	if (enabled) {
+		k_msgq_purge(&can_rx_queue);
+		atomic_set(&can_rx_streaming, 1);
+		return;
+	}
+
+	atomic_clear(&can_rx_streaming);
+	k_msgq_purge(&can_rx_queue);
 }
 
 static void can_tx_thread(void *p1, void *p2, void *p3)

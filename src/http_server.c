@@ -727,6 +727,7 @@ static void websocket_thread(void *p1, void *p2, void *p3)
 
 	websocket_echo_loop(client);
 	(void)zsock_close(client->fd);
+	can_bridge_set_rx_streaming(false);
 	atomic_clear(&ws_active);
 }
 
@@ -775,6 +776,7 @@ static int handle_websocket(int client_fd, const char *request,
 	}
 
 	LOG_INF("WebSocket connected");
+	can_bridge_set_rx_streaming(true);
 	k_thread_create(&ws_thread, ws_stack, K_THREAD_STACK_SIZEOF(ws_stack),
 			websocket_thread, &ws_client, NULL, NULL,
 			WS_PRIORITY, 0, K_NO_WAIT);
