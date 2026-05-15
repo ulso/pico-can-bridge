@@ -10,3 +10,21 @@
 		local-mac-address = [02 00 00 00 00 01];
 	};
 };
+
+/*
+ * Keep the last 1 MiB of the 8 MiB external flash for experimental LittleFS
+ * user storage. The application stays in the first 7 MiB.
+ */
+&code_partition {
+	reg = <0x100 0x6fff00>;
+};
+
+&flash0 {
+	partitions {
+		storage_partition: partition@700000 {
+			compatible = "zephyr,mapped-partition";
+			label = "storage";
+			reg = <0x700000 0x100000>;
+		};
+	};
+};

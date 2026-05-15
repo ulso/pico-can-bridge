@@ -12,6 +12,7 @@
 #include <zephyr/sys/util.h>
 
 #include "can_bridge.h"
+#include "storage.h"
 
 LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -25,6 +26,7 @@ LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 #define MDNS_FAST_ANNOUNCE_COUNT 20
 #define HTTP_REQUEST_MAX 1536
 #define HTTP_SEND_CHUNK 256
+#define USER_INDEX_MAX 4096
 #define WS_MAX_PAYLOAD 256
 #define WS_RESPONSE_MAX 512
 
@@ -275,6 +277,56 @@ static int send_all(int fd, const void *data, size_t len)
 
 		ptr += ret;
 		len -= ret;
+	}
+
+	return 0;
+}
+
+static int send_text_response(int fd, const char *status,
+			      const char *content_type, const char *body)
+{
+	char header[128];
+	size_t body_len = strlen(body);
+	int header_len;
+
+	header_len = snprintk(header, sizeof(header),
+			      "HTTP/1.0 %s\r\n"
+			      "Content-Type: %s\r\n"
+			      "Content-Length: %u\r\n"
+			      "Connection: close\r\n"
+			      "\r\n",
+			      status, content_type, (unsigned int)body_len);
+	if (header_len < 0 || header_len >= sizeof(header)) {
+		return -ENOMEM;
+	}
+
+	if (send_all(fd, header, header_len) < 0 ||
+	    send_all(fd, body, body_len) < 0) {
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int recv_request_body(int fd, uint8_t *body, size_t body_len,
+			     const uint8_t *pending, size_t pending_len)
+{
+	size_t copied = MIN(body_len, pending_len);
+	size_t received = copied;
+
+	memcpy(body, pending, copied);
+	if (pending_len > body_len) {
+		return -EMSGSIZE;
+	}
+
+	while (received < body_len) {
+		ssize_t ret = zsock_recv(fd, &body[received],
+					 body_len - received, 0);
+		if (ret <= 0) {
+			return ret == 0 ? -ECONNRESET : -errno;
+		}
+
+		received += ret;
 	}
 
 	return 0;
@@ -1040,6 +1092,75 @@ static void handle_client(int client_fd)
 		return;
 	}
 
+	if (strncmp(request, "PUT /user/index.html ", 21) == 0) {
+		static uint8_t body[USER_INDEX_MAX];
+		const char *content_length = find_header_value(request,
+							       "Content-Length");
+		size_t content_length_len;
+		size_t header_len;
+		size_t pending_len;
+		size_t body_len = 0;
+		int ret;
+
+		if (content_length == NULL) {
+			(void)send_text_response(client_fd, "411 Length Required",
+						 "text/plain; charset=utf-8",
+						 "content-length required\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		content_length_len = header_value_len(content_length);
+		for (size_t i = 0; i < content_length_len; i++) {
+			if (content_length[i] < '0' || content_length[i] > '9') {
+				(void)send_text_response(client_fd, "400 Bad Request",
+							 "text/plain; charset=utf-8",
+							 "invalid content-length\n");
+				(void)zsock_close(client_fd);
+				return;
+			}
+
+			body_len = body_len * 10U + (size_t)(content_length[i] - '0');
+		}
+
+		if (body_len > sizeof(body)) {
+			(void)send_text_response(client_fd, "413 Payload Too Large",
+						 "text/plain; charset=utf-8",
+						 "user page too large\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		header_len = ((uint8_t *)header_end + 4) - (uint8_t *)request;
+		pending_len = used > header_len ? used - header_len : 0;
+		ret = recv_request_body(client_fd, body, body_len,
+					(uint8_t *)header_end + 4, pending_len);
+		if (ret < 0) {
+			LOG_WRN("User page body recv failed: %d", ret);
+			(void)send_text_response(client_fd, "400 Bad Request",
+						 "text/plain; charset=utf-8",
+						 "body receive failed\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		ret = storage_write_user_index(body, body_len);
+		if (ret < 0) {
+			LOG_WRN("User page write failed: %d", ret);
+			(void)send_text_response(client_fd, "500 Internal Server Error",
+						 "text/plain; charset=utf-8",
+						 "user page write failed\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		(void)send_text_response(client_fd, "201 Created",
+					 "text/plain; charset=utf-8",
+					 "user page written\n");
+		(void)zsock_close(client_fd);
+		return;
+	}
+
 	if (strncmp(request, "GET /favicon.ico ", 17) == 0 ||
 	    strncmp(request, "GET /apple-touch-icon.png ", 26) == 0 ||
 	    strncmp(request, "GET /apple-touch-icon-precomposed.png ", 38) == 0) {
@@ -1049,6 +1170,101 @@ static void handle_client(int client_fd)
 			"\r\n";
 
 		(void)send_all(client_fd, no_content, strlen(no_content));
+		(void)zsock_close(client_fd);
+		return;
+	}
+
+	if (strncmp(request, "GET /fs/status ", 15) == 0) {
+		char body[192];
+		char header[128];
+		int body_len;
+		int header_len;
+
+		body_len = storage_format_status_json(body, sizeof(body));
+		if (body_len < 0 || body_len >= sizeof(body)) {
+			LOG_WRN("Filesystem status response too large");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		header_len = snprintk(header, sizeof(header),
+				      "HTTP/1.0 200 OK\r\n"
+				      "Content-Type: application/json\r\n"
+				      "Content-Length: %u\r\n"
+				      "Connection: close\r\n"
+				      "\r\n",
+				      (unsigned int)body_len);
+		if (header_len < 0 || header_len >= sizeof(header)) {
+			LOG_WRN("Filesystem status header too large");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		if (send_all(client_fd, header, header_len) < 0 ||
+		    send_all(client_fd, body, body_len) < 0) {
+			LOG_WRN("Filesystem status send failed");
+		}
+		(void)zsock_close(client_fd);
+		return;
+	}
+
+	if (strncmp(request, "GET /user ", 10) == 0 ||
+	    strncmp(request, "GET /user/ ", 11) == 0) {
+		static char user_index[USER_INDEX_MAX];
+		char header[128];
+		size_t body_len = 0;
+		int header_len;
+		int ret;
+
+		ret = storage_read_user_index(user_index, sizeof(user_index),
+					      &body_len);
+		if (ret < 0) {
+			static const char not_found[] =
+				"HTTP/1.0 404 Not Found\r\n"
+				"Content-Type: text/plain; charset=utf-8\r\n"
+				"Content-Length: 20\r\n"
+				"Connection: close\r\n"
+				"\r\n"
+				"user page not found\n";
+
+			LOG_INF("User page not available: %d", ret);
+			(void)send_all(client_fd, not_found, strlen(not_found));
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		header_len = snprintk(header, sizeof(header),
+				      "HTTP/1.0 200 OK\r\n"
+				      "Content-Type: text/html; charset=utf-8\r\n"
+				      "Content-Length: %u\r\n"
+				      "Connection: close\r\n"
+				      "\r\n",
+				      (unsigned int)body_len);
+		if (header_len < 0 || header_len >= sizeof(header)) {
+			LOG_WRN("User page response header too large");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		if (send_all(client_fd, header, header_len) < 0 ||
+		    send_all(client_fd, user_index, body_len) < 0) {
+			LOG_WRN("User page response send failed");
+		}
+		(void)zsock_close(client_fd);
+		return;
+	}
+
+	if (strncmp(request, "GET / ", 6) != 0 &&
+	    strncmp(request, "GET /index.html ", 16) != 0) {
+		static const char not_found[] =
+			"HTTP/1.0 404 Not Found\r\n"
+			"Content-Type: text/plain; charset=utf-8\r\n"
+			"Content-Length: 10\r\n"
+			"Connection: close\r\n"
+			"\r\n"
+			"not found\n";
+
+		(void)send_all(client_fd, not_found, strlen(not_found));
 		(void)zsock_close(client_fd);
 		return;
 	}
