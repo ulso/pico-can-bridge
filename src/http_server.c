@@ -26,7 +26,7 @@ LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 #define MDNS_FAST_ANNOUNCE_COUNT 20
 #define HTTP_REQUEST_MAX 1536
 #define HTTP_SEND_CHUNK 256
-#define USER_INDEX_MAX 4096
+#define USER_INDEX_MAX 16384
 #define WS_MAX_PAYLOAD 256
 #define WS_RESPONSE_MAX 512
 
@@ -246,7 +246,7 @@ static const char index_html[] =
 	"function makeFrame(){const data=parseData(dataEl.value);const dlc=Number.parseInt(dlcEl.value,10);if(data.some(v=>!Number.isInteger(v)||v<0||v>255))throw new Error('Invalid data byte');if(!Number.isInteger(dlc)||dlc<0||dlc>8)throw new Error('Invalid DLC');if(!rtrEl.checked&&data.length!==dlc)throw new Error('Data length must match DLC');const id=parseId(idEl.value);if(!Number.isInteger(id)||id<0)throw new Error('Invalid ID');return{type:'can.tx',bus:0,id,ext:extEl.checked,rtr:rtrEl.checked,dlc,data:rtrEl.checked?[]:data}}"
 	"async function copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(text);return}const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();document.execCommand('copy');ta.remove()}"
 	"async function refreshFs(){try{const r=await fetch('/fs/status');const msg=await r.json();updateFsStatus(msg);log('fs '+(msg.mounted?'mounted':'error '+msg.mountRet))}catch(e){log('! fs status '+e.message)}}"
-	"async function uploadUser(){try{const file=userFileEl.files&&userFileEl.files[0];if(!file)throw new Error('Choose an HTML file');if(file.size>4096)throw new Error('File must be 4096 bytes or less');const r=await fetch('/user/index.html',{method:'PUT',headers:{'Content-Type':'text/html; charset=utf-8'},body:file});const text=await r.text();if(!r.ok)throw new Error(text.trim()||r.status);log('uploaded '+file.name+' ('+file.size+' bytes)');await refreshFs()}catch(e){log('! upload '+e.message)}}"
+	"async function uploadUser(){try{const file=userFileEl.files&&userFileEl.files[0];if(!file)throw new Error('Choose an HTML file');if(file.size>16384)throw new Error('File must be 16384 bytes or less');const r=await fetch('/user/index.html',{method:'PUT',headers:{'Content-Type':'text/html; charset=utf-8'},body:file});const text=await r.text();if(!r.ok)throw new Error(text.trim()||r.status);log('uploaded '+file.name+' ('+file.size+' bytes)');await refreshFs()}catch(e){log('! upload '+e.message)}}"
 	"function connect(){"
 	"if(ws&&ws.readyState<2)return;"
 	"setStatus('wait','connecting');"
