@@ -42,6 +42,10 @@ TX/RX pins.
 
 ![Pico CAN Bridge desktop web UI](docs/images/web-ui-desktop.png)
 
+### Uploaded user page
+
+![Pico CAN Bridge uploaded user LED control page](docs/images/user-led.png)
+
 ### iPad
 
 ![Pico CAN Bridge running on iPad](docs/images/web-ui-ipad.png)
