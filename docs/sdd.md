@@ -12,8 +12,8 @@ The initial target host is macOS using IPv4 link-local networking over USB.
 
 - Board: [Adafruit Feather RP2040 CAN Bus](https://www.adafruit.com/product/5724)
 - MCU: RP2040
-- CAN controller: MCP2515 over SPI
-- CAN transceiver and onboard 120 ohm termination are provided by the board
+- CAN controller/transceiver: MCP25625 over SPI
+- Onboard 120 ohm termination is provided by the board
 - Status LED: onboard `led0`
 - USB: full-speed device, exposed as CDC-NCM
 
@@ -73,8 +73,9 @@ The WebSocket loop:
 
 ### CAN Bridge
 
-CAN is implemented with Zephyr's CAN API and the MCP2515 driver. The firmware
-uses:
+CAN is implemented with Zephyr's CAN API. The board uses a Microchip MCP25625,
+which combines an MCP2515-compatible CAN controller with a CAN transceiver, so
+the firmware uses Zephyr's MCP2515 SPI driver. The firmware uses:
 
 - one TX message queue
 - one RX message queue

@@ -12,7 +12,7 @@ Current features:
 - HTTP web UI served from the firmware
 - WebSocket CAN bridge at `/can`
 - JSON CAN TX/RX/status/config protocol
-- MCP2515 CAN controller in normal, loopback, or listen-only mode
+- MCP25625 CAN controller/transceiver in normal, loopback, or listen-only mode
 - Startup recovery for a macOS/RP2040 CDC-NCM alternate-setting race
 
 ## Current status
