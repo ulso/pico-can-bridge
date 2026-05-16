@@ -10,6 +10,7 @@ Current features:
 - IPv4 link-local addressing
 - mDNS hostname and DNS-SD HTTP service announcement
 - HTTP web UI served from the firmware
+- Optional user HTML page served from LittleFS at `/user`
 - WebSocket CAN bridge at `/can`
 - JSON CAN TX/RX/status/config protocol
 - MCP25625 CAN controller/transceiver in normal, loopback, or listen-only mode
@@ -137,6 +138,37 @@ http://pico-can-bridge.local/
 The UI can connect to the CAN WebSocket, transmit frames, display received
 frames, show CAN status, change bitrate/mode, and copy the current transmit
 frame as JSON for scripts.
+
+The root page is always the built-in firmware UI. This keeps a known-good
+control surface available even if an uploaded user page is missing or broken.
+
+### User Page Storage
+
+The firmware also exposes a LittleFS-backed user page at:
+
+```text
+http://pico-can-bridge.local/user
+```
+
+The built-in web UI can upload an HTML file to this page from the User Page
+panel. The same operation can also be done with curl:
+
+```sh
+curl -i -X PUT \
+  -H "Content-Type: text/html; charset=utf-8" \
+  --data-binary @my-page.html \
+  http://pico-can-bridge.local/user/index.html
+```
+
+Uploaded pages are stored as `/lfs/user/index.html` and are served back from
+LittleFS. The current upload limit is 512 KiB. If no user page has been
+uploaded, `/user` returns `404 Not Found`.
+
+Filesystem status is available at:
+
+```text
+http://pico-can-bridge.local/fs/status
+```
 
 ## WebSocket
 
