@@ -53,6 +53,19 @@ The server is intentionally started only after link-local IPv4 is ready. This
 keeps early USB enumeration quieter and prevents the UI from being available
 before the network path is usable.
 
+The root page is always served from firmware image data. User-provided HTML is
+stored separately in LittleFS and served at `/user`, so a broken uploaded page
+cannot replace the built-in control UI.
+
+The HTTP server also provides:
+
+- `PUT /user/index.html`: upload a user HTML page to LittleFS
+- `GET /user` and `GET /user/`: serve the uploaded user page
+- `GET /fs/status`: return LittleFS mount and free-space status as JSON
+
+User page transfers are streamed in small chunks instead of buffered as one
+large RAM allocation. The current maximum user page size is 512 KiB.
+
 ### WebSocket Server
 
 The WebSocket endpoint is:
@@ -138,4 +151,5 @@ setting.
 - Only CAN bus 0 is currently supported.
 - Only one WebSocket client can be active at a time.
 - WebSocket JSON payloads are limited to 255 bytes.
+- Uploaded user HTML pages are limited to 512 KiB.
 - Classical CAN frames are supported; CAN FD is not currently exposed.

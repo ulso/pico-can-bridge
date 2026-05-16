@@ -12,6 +12,7 @@
 #include <zephyr/sys/util.h>
 
 #include "can_bridge.h"
+#include "storage.h"
 
 LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 
@@ -25,6 +26,7 @@ LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 #define MDNS_FAST_ANNOUNCE_COUNT 20
 #define HTTP_REQUEST_MAX 1536
 #define HTTP_SEND_CHUNK 256
+#define USER_INDEX_MAX 524288
 #define WS_MAX_PAYLOAD 256
 #define WS_RESPONSE_MAX 512
 
@@ -58,6 +60,13 @@ static struct k_thread ws_thread;
 struct websocket_client {
 	int fd;
 	uint8_t pending[HTTP_REQUEST_MAX];
+	size_t pending_len;
+	size_t pending_pos;
+};
+
+struct request_body_reader {
+	int fd;
+	const uint8_t *pending;
 	size_t pending_len;
 	size_t pending_pos;
 };
@@ -154,6 +163,14 @@ static const char index_html[] =
 	"<div class=\"wide hint\"><span id=\"errorLabel\">TX err 0 / RX err 0</span></div>"
 	"</div>"
 	"</div>"
+	"<div class=\"panel\">"
+	"<h2>User Page</h2>"
+	"<div class=\"form\">"
+	"<div class=\"wide\"><label for=\"userFile\">HTML file</label><input id=\"userFile\" type=\"file\" accept=\".html,text/html\"></div>"
+	"<div class=\"wide toolbar\"><button id=\"uploadUser\">Upload</button><button id=\"refreshFs\">Status</button><button id=\"openUser\">Open</button></div>"
+	"<div class=\"wide hint\"><span id=\"fsStatus\">LittleFS -</span></div>"
+	"</div>"
+	"</div>"
 	"</div>"
 	"<div>"
 	"<div class=\"filters\">"
@@ -199,6 +216,11 @@ static const char index_html[] =
 	"const rtrEl=document.getElementById('rtr');"
 	"const bitrateEl=document.getElementById('bitrate');"
 	"const modeEl=document.getElementById('mode');"
+	"const userFileEl=document.getElementById('userFile');"
+	"const uploadUserBtn=document.getElementById('uploadUser');"
+	"const refreshFsBtn=document.getElementById('refreshFs');"
+	"const openUserBtn=document.getElementById('openUser');"
+	"const fsStatusEl=document.getElementById('fsStatus');"
 	"const showRxEl=document.getElementById('showRx');"
 	"const showTxEl=document.getElementById('showTx');"
 	"const filterIdEl=document.getElementById('filterId');"
@@ -219,6 +241,7 @@ static const char index_html[] =
 	"function esc(s){return String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}"
 	"function val(v){return v==null?'-':v}"
 	"function updateCounts(){rxCountEl.textContent=rxCount;txCountEl.textContent=txCount}"
+	"function updateFsStatus(msg){fsStatusEl.textContent=msg.mounted?'LittleFS '+msg.freeKiB+'/'+msg.totalKiB+' KiB free':'LittleFS not mounted ('+msg.mountRet+')'}"
 	"function stateView(state){if(state==='error-active')return['OK (error-active)','stateOk'];if(state==='error-warning')return['Warning (error-warning)','stateWarn'];if(state==='error-passive')return['Passive (error-passive)','stateWarn'];if(state==='bus-off')return['Bus off','stateBad'];if(state==='stopped')return['Stopped','stateOff'];return[state||'-','']}"
 	"function updateStatus(msg){const st=stateView(msg.state);canStateEl.textContent=st[0];canStateEl.className=st[1];txErrCountEl.textContent=msg.txErr||0;rxErrCountEl.textContent=msg.rxErr||0;txQueueEl.textContent=val(msg.txQueueUsed)+'/'+val(msg.txQueueFree);rxQueueEl.textContent=val(msg.rxQueueUsed)+'/'+val(msg.rxQueueFree);if(!configDirty){if(msg.bitrate)bitrateEl.value=msg.bitrate;if(msg.mode)modeEl.value=msg.mode}bitrateLabel.textContent=msg.bitrate?'CAN '+Math.round(msg.bitrate/1000)+' kbit/s':'CAN -';modeLabel.textContent='mode '+(msg.mode||'-');errorLabel.textContent='TX err '+(msg.txErr||0)+' / RX err '+(msg.rxErr||0)+' | TXQ '+val(msg.txQueueUsed)+'/'+val(msg.txQueueFree)+' | RXQ '+val(msg.rxQueueUsed)+'/'+val(msg.rxQueueFree)}"
 	"function requestStatus(){if(ws&&ws.readyState===1)ws.send(JSON.stringify({type:'can.status'}))}"
@@ -229,6 +252,8 @@ static const char index_html[] =
 	"function addFrame(dir,msg){frames.unshift({dir,msg,time:now()});while(frames.length>160)frames.pop();lastIdEl.textContent=fmtId(msg.id||0,msg.ext);renderFrames()}"
 	"function makeFrame(){const data=parseData(dataEl.value);const dlc=Number.parseInt(dlcEl.value,10);if(data.some(v=>!Number.isInteger(v)||v<0||v>255))throw new Error('Invalid data byte');if(!Number.isInteger(dlc)||dlc<0||dlc>8)throw new Error('Invalid DLC');if(!rtrEl.checked&&data.length!==dlc)throw new Error('Data length must match DLC');const id=parseId(idEl.value);if(!Number.isInteger(id)||id<0)throw new Error('Invalid ID');return{type:'can.tx',bus:0,id,ext:extEl.checked,rtr:rtrEl.checked,dlc,data:rtrEl.checked?[]:data}}"
 	"async function copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(text);return}const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();document.execCommand('copy');ta.remove()}"
+	"async function refreshFs(){try{const r=await fetch('/fs/status');const msg=await r.json();updateFsStatus(msg);log('fs '+(msg.mounted?'mounted':'error '+msg.mountRet))}catch(e){log('! fs status '+e.message)}}"
+	"async function uploadUser(){try{const file=userFileEl.files&&userFileEl.files[0];if(!file)throw new Error('Choose an HTML file');if(file.size>524288)throw new Error('File must be 512 KiB or less');const r=await fetch('/user/index.html',{method:'PUT',headers:{'Content-Type':'text/html; charset=utf-8'},body:file});const text=await r.text();if(!r.ok)throw new Error(text.trim()||r.status);log('uploaded '+file.name+' ('+file.size+' bytes)');await refreshFs()}catch(e){log('! upload '+e.message)}}"
 	"function connect(){"
 	"if(ws&&ws.readyState<2)return;"
 	"setStatus('wait','connecting');"
@@ -246,6 +271,9 @@ static const char index_html[] =
 	"modeEl.onchange=()=>{configDirty=true};"
 	"applyConfigBtn.onclick=()=>{const bitrate=Number.parseInt(bitrateEl.value,10);if(!Number.isInteger(bitrate)||bitrate<=0){log('! Invalid bitrate');return}const msg={type:'can.config.set',bitrate,mode:modeEl.value};const text=JSON.stringify(msg);if(ws&&ws.readyState===1){configDirty=false;ws.send(text);log('> '+text)}};"
 	"refreshStatusBtn.onclick=()=>{configDirty=false;requestStatus()};"
+	"refreshFsBtn.onclick=refreshFs;"
+	"uploadUserBtn.onclick=uploadUser;"
+	"openUserBtn.onclick=()=>{location.href='/user'};"
 	"showRxEl.onchange=renderFrames;"
 	"showTxEl.onchange=renderFrames;"
 	"filterIdEl.oninput=renderFrames;"
@@ -278,6 +306,67 @@ static int send_all(int fd, const void *data, size_t len)
 	}
 
 	return 0;
+}
+
+static int send_text_response(int fd, const char *status,
+			      const char *content_type, const char *body)
+{
+	char header[128];
+	size_t body_len = strlen(body);
+	int header_len;
+
+	header_len = snprintk(header, sizeof(header),
+			      "HTTP/1.0 %s\r\n"
+			      "Content-Type: %s\r\n"
+			      "Content-Length: %u\r\n"
+			      "Connection: close\r\n"
+			      "\r\n",
+			      status, content_type, (unsigned int)body_len);
+	if (header_len < 0 || header_len >= sizeof(header)) {
+		return -ENOMEM;
+	}
+
+	if (send_all(fd, header, header_len) < 0 ||
+	    send_all(fd, body, body_len) < 0) {
+		return -EIO;
+	}
+
+	return 0;
+}
+
+static int request_body_read(void *ctx, uint8_t *buf, size_t max_len,
+			     size_t *len)
+{
+	struct request_body_reader *reader = ctx;
+	size_t copied = 0;
+
+	if (max_len == 0 || len == NULL) {
+		return -EINVAL;
+	}
+
+	while (reader->pending_pos < reader->pending_len && copied < max_len) {
+		buf[copied++] = reader->pending[reader->pending_pos++];
+	}
+
+	if (copied > 0) {
+		*len = copied;
+		return 0;
+	}
+
+	ssize_t ret = zsock_recv(reader->fd, buf, max_len, 0);
+	if (ret <= 0) {
+		return ret == 0 ? -ECONNRESET : -errno;
+	}
+
+	*len = (size_t)ret;
+	return 0;
+}
+
+static int socket_write(void *ctx, const uint8_t *buf, size_t len)
+{
+	int fd = *(int *)ctx;
+
+	return send_all(fd, buf, len);
 }
 
 struct sha1_ctx {
@@ -1040,6 +1129,78 @@ static void handle_client(int client_fd)
 		return;
 	}
 
+	if (strncmp(request, "PUT /user/index.html ", 21) == 0) {
+		struct request_body_reader reader;
+		const char *content_length = find_header_value(request,
+							       "Content-Length");
+		size_t content_length_len;
+		size_t header_len;
+		size_t pending_len;
+		size_t body_len = 0;
+		int ret;
+
+		if (content_length == NULL) {
+			(void)send_text_response(client_fd, "411 Length Required",
+						 "text/plain; charset=utf-8",
+						 "content-length required\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		content_length_len = header_value_len(content_length);
+		for (size_t i = 0; i < content_length_len; i++) {
+			if (content_length[i] < '0' || content_length[i] > '9') {
+				(void)send_text_response(client_fd, "400 Bad Request",
+							 "text/plain; charset=utf-8",
+							 "invalid content-length\n");
+				(void)zsock_close(client_fd);
+				return;
+			}
+
+			body_len = body_len * 10U + (size_t)(content_length[i] - '0');
+		}
+
+		if (body_len > USER_INDEX_MAX) {
+			(void)send_text_response(client_fd, "413 Payload Too Large",
+						 "text/plain; charset=utf-8",
+						 "user page too large\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		header_len = ((uint8_t *)header_end + 4) - (uint8_t *)request;
+		pending_len = used > header_len ? used - header_len : 0;
+		if (pending_len > body_len) {
+			(void)send_text_response(client_fd, "400 Bad Request",
+						 "text/plain; charset=utf-8",
+						 "body larger than content-length\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		reader.fd = client_fd;
+		reader.pending = (uint8_t *)header_end + 4;
+		reader.pending_len = pending_len;
+		reader.pending_pos = 0;
+
+		ret = storage_write_user_index_stream(body_len, request_body_read,
+						      &reader);
+		if (ret < 0) {
+			LOG_WRN("User page write failed: %d", ret);
+			(void)send_text_response(client_fd, "500 Internal Server Error",
+						 "text/plain; charset=utf-8",
+						 "user page write failed\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		(void)send_text_response(client_fd, "201 Created",
+					 "text/plain; charset=utf-8",
+					 "user page written\n");
+		(void)zsock_close(client_fd);
+		return;
+	}
+
 	if (strncmp(request, "GET /favicon.ico ", 17) == 0 ||
 	    strncmp(request, "GET /apple-touch-icon.png ", 26) == 0 ||
 	    strncmp(request, "GET /apple-touch-icon-precomposed.png ", 38) == 0) {
@@ -1049,6 +1210,107 @@ static void handle_client(int client_fd)
 			"\r\n";
 
 		(void)send_all(client_fd, no_content, strlen(no_content));
+		(void)zsock_close(client_fd);
+		return;
+	}
+
+	if (strncmp(request, "GET /fs/status ", 15) == 0) {
+		char body[192];
+		char header[128];
+		int body_len;
+		int header_len;
+
+		body_len = storage_format_status_json(body, sizeof(body));
+		if (body_len < 0 || body_len >= sizeof(body)) {
+			LOG_WRN("Filesystem status response too large");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		header_len = snprintk(header, sizeof(header),
+				      "HTTP/1.0 200 OK\r\n"
+				      "Content-Type: application/json\r\n"
+				      "Content-Length: %u\r\n"
+				      "Connection: close\r\n"
+				      "\r\n",
+				      (unsigned int)body_len);
+		if (header_len < 0 || header_len >= sizeof(header)) {
+			LOG_WRN("Filesystem status header too large");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		if (send_all(client_fd, header, header_len) < 0 ||
+		    send_all(client_fd, body, body_len) < 0) {
+			LOG_WRN("Filesystem status send failed");
+		}
+		(void)zsock_close(client_fd);
+		return;
+	}
+
+	if (strncmp(request, "GET /user ", 10) == 0 ||
+	    strncmp(request, "GET /user/ ", 11) == 0) {
+		char header[128];
+		size_t body_len = 0;
+		int header_len;
+		int ret;
+
+		ret = storage_user_index_size(&body_len);
+		if (ret < 0) {
+			static const char not_found[] =
+				"HTTP/1.0 404 Not Found\r\n"
+				"Content-Type: text/plain; charset=utf-8\r\n"
+				"Content-Length: 20\r\n"
+				"Connection: close\r\n"
+				"\r\n"
+				"user page not found\n";
+
+			LOG_INF("User page not available: %d", ret);
+			(void)send_all(client_fd, not_found, strlen(not_found));
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		if (body_len > USER_INDEX_MAX) {
+			(void)send_text_response(client_fd, "413 Payload Too Large",
+						 "text/plain; charset=utf-8",
+						 "user page too large\n");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		header_len = snprintk(header, sizeof(header),
+				      "HTTP/1.0 200 OK\r\n"
+				      "Content-Type: text/html; charset=utf-8\r\n"
+				      "Content-Length: %u\r\n"
+				      "Connection: close\r\n"
+				      "\r\n",
+				      (unsigned int)body_len);
+		if (header_len < 0 || header_len >= sizeof(header)) {
+			LOG_WRN("User page response header too large");
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		if (send_all(client_fd, header, header_len) < 0 ||
+		    storage_stream_user_index(socket_write, &client_fd) < 0) {
+			LOG_WRN("User page response send failed");
+		}
+		(void)zsock_close(client_fd);
+		return;
+	}
+
+	if (strncmp(request, "GET / ", 6) != 0 &&
+	    strncmp(request, "GET /index.html ", 16) != 0) {
+		static const char not_found[] =
+			"HTTP/1.0 404 Not Found\r\n"
+			"Content-Type: text/plain; charset=utf-8\r\n"
+			"Content-Length: 10\r\n"
+			"Connection: close\r\n"
+			"\r\n"
+			"not found\n";
+
+		(void)send_all(client_fd, not_found, strlen(not_found));
 		(void)zsock_close(client_fd);
 		return;
 	}

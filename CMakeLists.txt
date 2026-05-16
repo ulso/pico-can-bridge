@@ -18,5 +18,6 @@ target_sources(app PRIVATE
     src/can_bridge.c
     src/main.c
     src/http_server.c
+    src/storage.c
     src/usb_descriptors.c
 )
