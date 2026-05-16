@@ -17,6 +17,7 @@ LOG_MODULE_REGISTER(storage, CONFIG_LOG_DEFAULT_LEVEL);
 #define USER_DIR_PATH STORAGE_PATH "/user"
 #define USER_INDEX_PATH STORAGE_PATH "/user/index.html"
 #define STORAGE_PARTITION storage_partition
+#define STORAGE_IO_CHUNK 512
 
 FS_LITTLEFS_DECLARE_DEFAULT_CONFIG(storage);
 
@@ -115,13 +116,40 @@ int storage_format_status_json(char *response, size_t response_len)
 			status.total_kib, status.free_kib);
 }
 
-int storage_read_user_index(char *buf, size_t buf_len, size_t *len)
+int storage_user_index_size(size_t *len)
 {
-	struct fs_file_t file;
-	ssize_t read_len;
+	struct fs_dirent entry;
 	int ret;
 
-	if (buf_len == 0 || len == NULL) {
+	if (len == NULL) {
+		return -EINVAL;
+	}
+
+	ret = storage_mount_once();
+	if (ret < 0) {
+		return ret;
+	}
+
+	ret = fs_stat(USER_INDEX_PATH, &entry);
+	if (ret < 0) {
+		return ret;
+	}
+
+	if (entry.type != FS_DIR_ENTRY_FILE) {
+		return -EISDIR;
+	}
+
+	*len = entry.size;
+	return 0;
+}
+
+int storage_stream_user_index(storage_write_cb_t writer, void *ctx)
+{
+	struct fs_file_t file;
+	uint8_t buf[STORAGE_IO_CHUNK];
+	int ret;
+
+	if (writer == NULL) {
 		return -EINVAL;
 	}
 
@@ -136,28 +164,39 @@ int storage_read_user_index(char *buf, size_t buf_len, size_t *len)
 		return ret;
 	}
 
-	read_len = fs_read(&file, buf, buf_len);
+	while (1) {
+		ssize_t read_len = fs_read(&file, buf, sizeof(buf));
+
+		if (read_len < 0) {
+			ret = (int)read_len;
+			break;
+		}
+
+		if (read_len == 0) {
+			ret = 0;
+			break;
+		}
+
+		ret = writer(ctx, buf, (size_t)read_len);
+		if (ret < 0) {
+			break;
+		}
+	}
+
 	(void)fs_close(&file);
-	if (read_len < 0) {
-		return (int)read_len;
-	}
-
-	if ((size_t)read_len == buf_len) {
-		return -EFBIG;
-	}
-
-	*len = (size_t)read_len;
-	return 0;
+	return ret;
 }
 
-int storage_write_user_index(const uint8_t *data, size_t len)
+int storage_write_user_index_stream(size_t len, storage_read_cb_t reader,
+				    void *ctx)
 {
 	struct fs_file_t file;
 	struct fs_dirent entry;
-	ssize_t written;
+	uint8_t buf[STORAGE_IO_CHUNK];
+	size_t remaining = len;
 	int ret;
 
-	if (data == NULL && len > 0) {
+	if (reader == NULL) {
 		return -EINVAL;
 	}
 
@@ -185,18 +224,58 @@ int storage_write_user_index(const uint8_t *data, size_t len)
 		return ret;
 	}
 
-	written = fs_write(&file, data, len);
+	while (remaining > 0) {
+		size_t requested = MIN(remaining, sizeof(buf));
+		size_t read_len = 0;
+		size_t written_total = 0;
+
+		ret = reader(ctx, buf, requested, &read_len);
+		if (ret < 0) {
+			break;
+		}
+
+		if (read_len == 0 || read_len > requested) {
+			ret = -EIO;
+			break;
+		}
+
+		while (written_total < read_len) {
+			ssize_t written = fs_write(&file,
+						   &buf[written_total],
+						   read_len - written_total);
+			if (written < 0) {
+				ret = (int)written;
+				break;
+			}
+
+			if (written == 0) {
+				ret = -EIO;
+				break;
+			}
+
+			written_total += (size_t)written;
+		}
+
+		if (ret < 0) {
+			break;
+		}
+
+		remaining -= read_len;
+	}
+
+	if (ret < 0) {
+		(void)fs_close(&file);
+		return ret;
+	}
+
 	ret = fs_sync(&file);
 	(void)fs_close(&file);
-	if (written < 0) {
-		return (int)written;
-	}
 
 	if (ret < 0) {
 		return ret;
 	}
 
-	if ((size_t)written != len) {
+	if (remaining != 0) {
 		return -EIO;
 	}
 

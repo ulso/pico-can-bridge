@@ -26,7 +26,7 @@ LOG_MODULE_REGISTER(http_server, CONFIG_LOG_DEFAULT_LEVEL);
 #define MDNS_FAST_ANNOUNCE_COUNT 20
 #define HTTP_REQUEST_MAX 1536
 #define HTTP_SEND_CHUNK 256
-#define USER_INDEX_MAX 16384
+#define USER_INDEX_MAX 524288
 #define WS_MAX_PAYLOAD 256
 #define WS_RESPONSE_MAX 512
 
@@ -60,6 +60,13 @@ static struct k_thread ws_thread;
 struct websocket_client {
 	int fd;
 	uint8_t pending[HTTP_REQUEST_MAX];
+	size_t pending_len;
+	size_t pending_pos;
+};
+
+struct request_body_reader {
+	int fd;
+	const uint8_t *pending;
 	size_t pending_len;
 	size_t pending_pos;
 };
@@ -246,7 +253,7 @@ static const char index_html[] =
 	"function makeFrame(){const data=parseData(dataEl.value);const dlc=Number.parseInt(dlcEl.value,10);if(data.some(v=>!Number.isInteger(v)||v<0||v>255))throw new Error('Invalid data byte');if(!Number.isInteger(dlc)||dlc<0||dlc>8)throw new Error('Invalid DLC');if(!rtrEl.checked&&data.length!==dlc)throw new Error('Data length must match DLC');const id=parseId(idEl.value);if(!Number.isInteger(id)||id<0)throw new Error('Invalid ID');return{type:'can.tx',bus:0,id,ext:extEl.checked,rtr:rtrEl.checked,dlc,data:rtrEl.checked?[]:data}}"
 	"async function copyText(text){if(navigator.clipboard&&navigator.clipboard.writeText){await navigator.clipboard.writeText(text);return}const ta=document.createElement('textarea');ta.value=text;ta.style.position='fixed';ta.style.opacity='0';document.body.appendChild(ta);ta.focus();ta.select();document.execCommand('copy');ta.remove()}"
 	"async function refreshFs(){try{const r=await fetch('/fs/status');const msg=await r.json();updateFsStatus(msg);log('fs '+(msg.mounted?'mounted':'error '+msg.mountRet))}catch(e){log('! fs status '+e.message)}}"
-	"async function uploadUser(){try{const file=userFileEl.files&&userFileEl.files[0];if(!file)throw new Error('Choose an HTML file');if(file.size>16384)throw new Error('File must be 16384 bytes or less');const r=await fetch('/user/index.html',{method:'PUT',headers:{'Content-Type':'text/html; charset=utf-8'},body:file});const text=await r.text();if(!r.ok)throw new Error(text.trim()||r.status);log('uploaded '+file.name+' ('+file.size+' bytes)');await refreshFs()}catch(e){log('! upload '+e.message)}}"
+	"async function uploadUser(){try{const file=userFileEl.files&&userFileEl.files[0];if(!file)throw new Error('Choose an HTML file');if(file.size>524288)throw new Error('File must be 512 KiB or less');const r=await fetch('/user/index.html',{method:'PUT',headers:{'Content-Type':'text/html; charset=utf-8'},body:file});const text=await r.text();if(!r.ok)throw new Error(text.trim()||r.status);log('uploaded '+file.name+' ('+file.size+' bytes)');await refreshFs()}catch(e){log('! upload '+e.message)}}"
 	"function connect(){"
 	"if(ws&&ws.readyState<2)return;"
 	"setStatus('wait','connecting');"
@@ -327,28 +334,39 @@ static int send_text_response(int fd, const char *status,
 	return 0;
 }
 
-static int recv_request_body(int fd, uint8_t *body, size_t body_len,
-			     const uint8_t *pending, size_t pending_len)
+static int request_body_read(void *ctx, uint8_t *buf, size_t max_len,
+			     size_t *len)
 {
-	size_t copied = MIN(body_len, pending_len);
-	size_t received = copied;
+	struct request_body_reader *reader = ctx;
+	size_t copied = 0;
 
-	memcpy(body, pending, copied);
-	if (pending_len > body_len) {
-		return -EMSGSIZE;
+	if (max_len == 0 || len == NULL) {
+		return -EINVAL;
 	}
 
-	while (received < body_len) {
-		ssize_t ret = zsock_recv(fd, &body[received],
-					 body_len - received, 0);
-		if (ret <= 0) {
-			return ret == 0 ? -ECONNRESET : -errno;
-		}
-
-		received += ret;
+	while (reader->pending_pos < reader->pending_len && copied < max_len) {
+		buf[copied++] = reader->pending[reader->pending_pos++];
 	}
 
+	if (copied > 0) {
+		*len = copied;
+		return 0;
+	}
+
+	ssize_t ret = zsock_recv(reader->fd, buf, max_len, 0);
+	if (ret <= 0) {
+		return ret == 0 ? -ECONNRESET : -errno;
+	}
+
+	*len = (size_t)ret;
 	return 0;
+}
+
+static int socket_write(void *ctx, const uint8_t *buf, size_t len)
+{
+	int fd = *(int *)ctx;
+
+	return send_all(fd, buf, len);
 }
 
 struct sha1_ctx {
@@ -1112,7 +1130,7 @@ static void handle_client(int client_fd)
 	}
 
 	if (strncmp(request, "PUT /user/index.html ", 21) == 0) {
-		static uint8_t body[USER_INDEX_MAX];
+		struct request_body_reader reader;
 		const char *content_length = find_header_value(request,
 							       "Content-Length");
 		size_t content_length_len;
@@ -1142,7 +1160,7 @@ static void handle_client(int client_fd)
 			body_len = body_len * 10U + (size_t)(content_length[i] - '0');
 		}
 
-		if (body_len > sizeof(body)) {
+		if (body_len > USER_INDEX_MAX) {
 			(void)send_text_response(client_fd, "413 Payload Too Large",
 						 "text/plain; charset=utf-8",
 						 "user page too large\n");
@@ -1152,18 +1170,21 @@ static void handle_client(int client_fd)
 
 		header_len = ((uint8_t *)header_end + 4) - (uint8_t *)request;
 		pending_len = used > header_len ? used - header_len : 0;
-		ret = recv_request_body(client_fd, body, body_len,
-					(uint8_t *)header_end + 4, pending_len);
-		if (ret < 0) {
-			LOG_WRN("User page body recv failed: %d", ret);
+		if (pending_len > body_len) {
 			(void)send_text_response(client_fd, "400 Bad Request",
 						 "text/plain; charset=utf-8",
-						 "body receive failed\n");
+						 "body larger than content-length\n");
 			(void)zsock_close(client_fd);
 			return;
 		}
 
-		ret = storage_write_user_index(body, body_len);
+		reader.fd = client_fd;
+		reader.pending = (uint8_t *)header_end + 4;
+		reader.pending_len = pending_len;
+		reader.pending_pos = 0;
+
+		ret = storage_write_user_index_stream(body_len, request_body_read,
+						      &reader);
 		if (ret < 0) {
 			LOG_WRN("User page write failed: %d", ret);
 			(void)send_text_response(client_fd, "500 Internal Server Error",
@@ -1229,14 +1250,12 @@ static void handle_client(int client_fd)
 
 	if (strncmp(request, "GET /user ", 10) == 0 ||
 	    strncmp(request, "GET /user/ ", 11) == 0) {
-		static char user_index[USER_INDEX_MAX];
 		char header[128];
 		size_t body_len = 0;
 		int header_len;
 		int ret;
 
-		ret = storage_read_user_index(user_index, sizeof(user_index),
-					      &body_len);
+		ret = storage_user_index_size(&body_len);
 		if (ret < 0) {
 			static const char not_found[] =
 				"HTTP/1.0 404 Not Found\r\n"
@@ -1248,6 +1267,14 @@ static void handle_client(int client_fd)
 
 			LOG_INF("User page not available: %d", ret);
 			(void)send_all(client_fd, not_found, strlen(not_found));
+			(void)zsock_close(client_fd);
+			return;
+		}
+
+		if (body_len > USER_INDEX_MAX) {
+			(void)send_text_response(client_fd, "413 Payload Too Large",
+						 "text/plain; charset=utf-8",
+						 "user page too large\n");
 			(void)zsock_close(client_fd);
 			return;
 		}
@@ -1266,7 +1293,7 @@ static void handle_client(int client_fd)
 		}
 
 		if (send_all(client_fd, header, header_len) < 0 ||
-		    send_all(client_fd, user_index, body_len) < 0) {
+		    storage_stream_user_index(socket_write, &client_fd) < 0) {
 			LOG_WRN("User page response send failed");
 		}
 		(void)zsock_close(client_fd);
